@@ -1,0 +1,5 @@
+They are getting too close, hiding 
+failsafe passcode at "192.168.1.2"
+the password is "0101". Remember, you'll 
+need to connect back here at "192.168.1.1" so dont forget
+the password.

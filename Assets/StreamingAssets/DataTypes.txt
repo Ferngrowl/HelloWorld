@@ -1,0 +1,10 @@
+<string>: Used for a sequence of characters that 
+appear on a keyboard, such as letters, numbers and symbols.
+
+<character>: Used to store a single character.
+    
+<integer>: Used to store whole numbers.
+    
+<float>: Used for numbers that contain decimal points.
+    
+<boolean>: Used where data is restricted to True/False or yes/no options.

@@ -1,0 +1,10 @@
+HELP: Provides information for commands.
+DIR:  Displays a list of files and subdirectories in a directory.
+CD: Changes the current directory.
+CD ROOT: Navigate to the highest level directory.
+CD ..: Navigate to the parent directory.
+CD <FOLDER>: Navigates to the folder of that name, if it exists.
+OPEN <FILE>.<TYPE>: Opens and displays the file
+CONNECT <IP ADRESS> <PASSWORD>: connects to another system
+on the same network
+EXIT: Quits the program.
