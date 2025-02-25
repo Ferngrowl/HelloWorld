@@ -4,6 +4,7 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
+using System.Linq; 
 
 public class TerminalManager : MonoBehaviour
 {
@@ -14,21 +15,117 @@ public class TerminalManager : MonoBehaviour
      public TMP_Text directoryLineMain;
      public GameObject userInputLine;
      public ScrollRect sr;
+     private List<string> commandHistory = new List<string>();
+     private int currentHistoryIndex = -1;
+     private bool isNavigatingHistory = false;
+
      public GameObject msgList;
+
+     
 
      Interpreter interpreter;
      private FileManager fileManager;
 
      private void Start()
      {
+          // WebGL input capture
+          #if UNITY_WEBGL && !UNITY_EDITOR
+          WebGLInput.captureAllKeyboardInput = true;
+          #endif
+
           interpreter = GetComponent<Interpreter>();
           fileManager = GetComponent<FileManager>();
 
           //focus input line
+          terminalInput.onValueChanged.AddListener(HandleInputChange);
           terminalInput.ActivateInputField();
           terminalInput.Select();
-
           DisplayStartupMessage(); // Display title or welcome message at startup
+     }
+     
+     private void Update()
+     {
+          HandleEnterKey();
+          HandleArrowKeys();
+     }
+
+     private void HandleEnterKey()
+     {
+          if (terminalInput.isFocused && Input.GetKeyDown(KeyCode.Return) && !string.IsNullOrWhiteSpace(terminalInput.text))
+          {
+               string userInput = terminalInput.text;
+               ClearInputField();
+               
+               // Add to history before processing
+               commandHistory.Add(userInput);
+               while (commandHistory.Count > 10) commandHistory.RemoveAt(0);
+               currentHistoryIndex = -1;
+
+               ProcessCommand(userInput);
+               terminalInput.ActivateInputField();
+          }
+     }
+
+     private void HandleArrowKeys()
+     {
+          if (!terminalInput.isFocused) return;
+
+          if (Input.GetKeyDown(KeyCode.UpArrow))
+          {
+               if (commandHistory.Count == 0) return;
+               
+               isNavigatingHistory = true;
+               currentHistoryIndex = currentHistoryIndex == -1 
+                    ? commandHistory.Count - 1
+                    : Mathf.Clamp(currentHistoryIndex - 1, 0, commandHistory.Count - 1);
+               
+               terminalInput.text = commandHistory[currentHistoryIndex];
+               terminalInput.caretPosition = terminalInput.text.Length;
+               isNavigatingHistory = false;
+          }
+          else if (Input.GetKeyDown(KeyCode.DownArrow))
+          {
+               if (currentHistoryIndex == -1) return;
+               
+               isNavigatingHistory = true;
+               currentHistoryIndex++;
+
+               // Handle overflow case
+               if (currentHistoryIndex >= commandHistory.Count)
+               {
+                    terminalInput.text = "";
+                    currentHistoryIndex = -1;
+               }
+               else
+               {
+                    terminalInput.text = commandHistory[currentHistoryIndex];
+               }
+               
+               terminalInput.caretPosition = terminalInput.text.Length;
+               isNavigatingHistory = false;
+          }
+     }
+
+     private void ProcessCommand(string userInput)
+     {
+          AddDirectoryLine(userInput);
+          int lines = AddInterpreterLines(interpreter.Interpret(userInput));
+          ScrollToBottom(lines);
+          userInputLine.transform.SetAsLastSibling();
+          AdjustRectTransform(directoryLineMain);
+          CurateTerminalOutput(200);
+     }
+
+     private void HandleInputChange(string newValue)
+     {
+          if (!isNavigatingHistory)
+          {
+               // Only reset if not at end of history
+               if (currentHistoryIndex != commandHistory.Count - 1)
+               {
+                    currentHistoryIndex = -1;
+               }
+          }
      }
 
      // use to display a boot up sequence 
@@ -76,39 +173,6 @@ public class TerminalManager : MonoBehaviour
           
           // set user input line to the bottom of the list
           userInputLine.transform.SetAsLastSibling();
-     }
-
-     private void OnGUI()
-     {
-          if(terminalInput.isFocused && terminalInput.text != "" && Input.GetKeyDown(KeyCode.Return))
-          {
-                    //store user input
-                    string userInput = terminalInput.text;
-                    
-                    //clear input field
-                    ClearInputField();
-
-                    //instantiate game object with directory prefix
-                    AddDirectoryLine(userInput);
-
-                    // add the interpretation lines
-                    int lines = AddInterpreterLines(interpreter.Interpret(userInput));
-
-                    //scroll to the bottome of the scroll rect
-                    ScrollToBottom(lines);
-
-                    //move user input to the bottom
-                    userInputLine.transform.SetAsLastSibling();
-
-                    AdjustRectTransform(directoryLineMain);
-
-                    //delete excess text
-                    CurateTerminalOutput(200);
-
-                    //refocus input line
-                    terminalInput.ActivateInputField();
-                    terminalInput.Select();
-          }
      }
    
      void ClearInputField()
@@ -201,8 +265,11 @@ public class TerminalManager : MonoBehaviour
      {
           // Add the lines to the terminal
           AddInterpreterLines(lines);
-
-          // Optionally scroll to the bottom if needed
+          
+          // Move input line to bottom
+          userInputLine.transform.SetAsLastSibling();
+          
+          // Optionally scroll to the bottom
           ScrollToBottom(lines.Count);
      }
 

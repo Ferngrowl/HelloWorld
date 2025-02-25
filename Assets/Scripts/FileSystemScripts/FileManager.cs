@@ -1,7 +1,9 @@
+using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
+using TMPro;
 using UnityEngine;
-using System.IO;
-using System;
+using UnityEngine.Networking;
 
 public class FileManager : MonoBehaviour
 {
@@ -51,7 +53,9 @@ public class FileManager : MonoBehaviour
         switch (command.ToLower()) // Ensure command processing is case-insensitive
         {
             case "help":
-                terminalManager.DisplayText(LoadFile("help.txt", "red", 1));
+                StartCoroutine(LoadFile("help.txt", "red", 1, (helpText) => {
+                    terminalManager.DisplayText(helpText);
+                }));
                 break;
             case "dir":
                 //first check if empty
@@ -218,43 +222,46 @@ public class FileManager : MonoBehaviour
 
  
     // LoadFile method to return a list of colored and formatted strings
-    List<string> LoadFile(string path, string color, int spacing)
+    public IEnumerator LoadFile(string fileName, string color, int spacing, System.Action<List<string>> callback)
     {
         List<string> formattedLines = new List<string>();
-        string fullPath = Path.Combine(Application.streamingAssetsPath, path);
+        
+        // Modified path handling with proper conditional compilation
+        string fullPath;
+        #if UNITY_WEBGL && !UNITY_EDITOR
+        fullPath = $"{Application.streamingAssetsPath}/{fileName}";
+        #else
+        fullPath = System.IO.Path.Combine(Application.streamingAssetsPath, fileName);
+        #endif
+
+        Debug.Log($"Attempting to load file from: {fullPath}");
 
         // Add initial spacing
-        for(int i = 0; i < spacing; i++)
-        {
-            formattedLines.Add("");
-        }
+        for (int i = 0; i < spacing; i++) formattedLines.Add("");
 
-        try
+        using (UnityWebRequest request = UnityWebRequest.Get(fullPath))
         {
-            using (StreamReader file = new StreamReader(fullPath))
+            yield return request.SendWebRequest();
+
+            if (request.result == UnityWebRequest.Result.Success)
             {
-                while (!file.EndOfStream)
+                string[] lines = request.downloadHandler.text.Split('\n');
+                foreach (string line in lines)
                 {
-                    // Apply color and add each line to the list
-                    string line = file.ReadLine();
-                    formattedLines.Add(ColorString(line, colors[color]));
+                    formattedLines.Add(ColorString(line.Trim(), colors[color]));
                 }
             }
-        }
-        catch (Exception ex)
-        {
-            Debug.LogError("Error loading file: " + ex.Message);
-            // Optionally return or add an error message to formattedLines
-            formattedLines.Add(ColorString("Error loading file.", colors["red"]));
+            else
+            {
+                Debug.LogError($"Error loading {fileName}: {request.error}");
+                formattedLines.Add(ColorString("Error loading file.", colors["red"]));
+            }
         }
 
         // Add trailing spacing
-        for(int i = 0; i < spacing; i++)
-        {
-            formattedLines.Add("");
-        }
+        for (int i = 0; i < spacing; i++) formattedLines.Add("");
 
-        return formattedLines;
+        callback?.Invoke(formattedLines);
     }
  
     public string ColorString(string s, string colorCode)
@@ -262,31 +269,26 @@ public class FileManager : MonoBehaviour
         return $"<color={colorCode}>{s}</color>";
     }
 
-    public void OpenAndDisplayFile(string fileName)
+    private void OpenAndDisplayFile(string fileName)
     {
-       fileName = fileName.ToLower(); // Ensure filename is in lower case for comparison
+        fileName = fileName.ToLower();
         if (currentFolder.Files.TryGetValue(fileName, out ConsoleFile file))
         {
-            // Check if the file has direct content specified
             if (!string.IsNullOrEmpty(file.Content))
             {
-                // Directly use the content of the file
-                List<string> fileContent = new List<string> { ColorString(file.Content, colors["blue"]) };
-                terminalManager.DisplayText(fileContent);
-                response.Add("This information seems random....");
+                var content = new List<string> { ColorString(file.Content, colors["blue"]) };
+                terminalManager.DisplayText(content);
             }
             else
             {
-                // If the file has no direct content, attempt to load from the physical file
-                List<string> fileContent = LoadFile(file.Name, "blue", 1);
-                terminalManager.DisplayText(fileContent);
-                response.Add("This information seems important...");
+                StartCoroutine(LoadFile(file.Name, "blue", 1, (formattedLines) => {
+                    terminalManager.DisplayText(formattedLines);
+                }));
             }
         }
         else
         {
-            List<string> response = new List<string> { "File not found." };
-            terminalManager.DisplayText(response);
+            terminalManager.DisplayText(new List<string> { "File not found." });
         }
     }
 
