@@ -33,74 +33,85 @@ public class Interpreter : MonoBehaviour
 
     }
 
-    public List<string> Interpret(string userInput)
+    public IEnumerator InterpretAsync(string userInput, System.Action<List<string>> callback)
     {
-        response.Clear();
+        List<string> response = new List<string>();
+        bool errorOccurred = false;
+        Exception caughtException = null;
 
-         // Check if awaiting password input before splitting the command
-        if (fileManager.awaitingPasswordInput == true) 
+        var enumerator = InterpretCoroutine(userInput, response, ex => {
+            errorOccurred = true;
+            caughtException = ex;
+        });
+        
+        while (enumerator.MoveNext())
         {
-            // Directly forward the userInput as a password attempt
-            response.AddRange(fileManager.ProcessPasswordAttempt(userInput));
+            yield return enumerator.Current;
         }
-        else
-        {
-            string[] args = userInput.Split();
 
-            switch (args[0])
+        if (errorOccurred)
+        {
+            Debug.LogError($"Command error: {caughtException}");
+            response.Add("System error: Command failed to execute");
+        }
+
+        callback(response);
+    }
+
+    private IEnumerator InterpretCoroutine(string userInput, List<string> response, Action<Exception> errorHandler)
+    {
+        if (fileManager.awaitingPasswordInput)
+        {
+            try
             {
-                case "help":
-                    if (fileManager != null)
-                    {
-                        response.AddRange(fileManager.ProcessCommand(args[0], args));
-                    }
-                    break;
-                
-                case "dir":
-                    if (fileManager != null)
-                    {
-                        response.AddRange(fileManager.ProcessCommand(args[0], args));
-                    }
-                    break;
-
-                case "cd":
-                    if (fileManager != null)
-                    {
-                        response.AddRange(fileManager.ProcessCommand(args[0], args));
-                    }
-                    break;
-
-                case "open":
-                    if (fileManager != null)
-                    {
-                        response.AddRange(fileManager.ProcessCommand(args[0], args));
-                    }
-                    break;
-                
-                case "connect":
-                    if (fileManager != null)
-                    {
-                        response.AddRange(fileManager.ProcessCommand(args[0], args));
-                    }
-                    break;
-
-                // Handle other non-file system commands
-                case "displaytitle":
-                    //load title
-                    LoadTitle("ascii.txt", "red", 2);
-                    break;
-
-                case "exit":
-                    Application.Quit();
-                    break;
-
-                default:
-                    response.Add("Command not recognized.");
-                    response.Add("Type \"help\" for a list of commands.");
-                    break;
-            } 
+                response = fileManager.ProcessPasswordAttempt(userInput);
+            }
+            catch (Exception ex)
+            {
+                errorHandler(ex);
+            }
+            yield break;
         }
-        return response;
+
+        string[] args = userInput.Split();
+        if (args.Length == 0) yield break;
+
+        IEnumerator commandCoroutine = fileManager.ProcessCommandAsync(
+            args[0], 
+            args, 
+            commandResponse => response = commandResponse
+        );
+
+        yield return RunWithErrorHandling(commandCoroutine, errorHandler);
+    }
+
+    private IEnumerator RunWithErrorHandling(IEnumerator coroutine, Action<Exception> errorHandler)
+    {
+        while (true)
+        {
+            bool moveNext;
+            Exception exception = null;
+            try
+            {
+                moveNext = coroutine.MoveNext();
+            }
+            catch (Exception ex)
+            {
+                moveNext = false;
+                exception = ex;
+            }
+
+            if (exception != null)
+            {
+                errorHandler(exception);
+                yield break;
+            }
+
+            if (!moveNext)
+                yield break;
+
+            yield return coroutine.Current;
+        }
     }
 
     public string ColorString(string s, string color)
@@ -111,22 +122,15 @@ public class Interpreter : MonoBehaviour
         return leftTag + s + rightTag;
     }
 
-    public List<string> LoadTitle(string path, string color, int spacing)
+    public IEnumerator LoadTitle(string path, string color, int spacing, System.Action<List<string>> callback)
     {
-        StreamReader file = new StreamReader(Path.Combine(Application.streamingAssetsPath, path));
-
-        while(!file.EndOfStream)
-        {
-            response.Add(ColorString(file.ReadLine(), colors[color]));
-        }
-
-        for(int i = 0; i < spacing; i++)
-        {
-            response.Add("");
-        }
+        List<string> result = new List<string>();
         
-        file.Close();
-        return response;
+        // Use FileManager's WebGL-compatible loading
+        yield return fileManager.StartCoroutine(fileManager.LoadFile(path, color, spacing, lines => {
+            result = lines;
+            callback?.Invoke(result);
+        }));
     }
 
 }

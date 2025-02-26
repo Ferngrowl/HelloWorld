@@ -37,49 +37,51 @@ public class FileManager : MonoBehaviour
     // Start is called before the first frame update
     void Start()
     {
-       // if (virtualMachineManager == null) Debug.LogError("virtualMachineManager is null");
-       // else if (virtualMachineManager.currentVM == null) Debug.LogError("currentVM is null");
-       // else if (virtualMachineManager.currentVM.FileSystem == null) Debug.LogError("FileSystem is null");
-
+        // Assuming virtualMachineManager.currentVM.FileSystem is already assigned.
         consoleFileSystem = virtualMachineManager.currentVM.FileSystem;
+
+        // Set the root and current folder.
         root = consoleFileSystem.GetRootFolder();
         currentFolder = consoleFileSystem.GetRootFolder();
     }
 
-    public List<string> ProcessCommand(string command, string[] args)
+    public IEnumerator ProcessCommandAsync(string command, string[] args, System.Action<List<string>> callback)
     {
         List<string> response = new List<string>();
 
         switch (command.ToLower()) // Ensure command processing is case-insensitive
         {
             case "help":
-                StartCoroutine(LoadFile("help.txt", "red", 1, (helpText) => {
-                    terminalManager.DisplayText(helpText);
+                yield return StartCoroutine(LoadFile("help.txt", "red", 1, helpText => {
+                terminalManager.DisplayText(helpText);
+                callback(helpText);
                 }));
                 break;
+
             case "dir":
-                //first check if empty
-                if (currentFolder.Children.Count == 0 && currentFolder.Files.Count == 0)
+                response.Clear();
+                Debug.Log($"Current Folder: {currentFolder.Name}");
+                Debug.Log($"Children: {currentFolder.Children.Count}, Files: {currentFolder.Files.Count}");
+                if (currentFolder.Children.Count + currentFolder.Files.Count == 0)
                 {
-                    // If there are no children folders or files, display <empty>
                     response.Add("<empty>");
                 }
                 else
                 {
-                    // List all child folders with indication if they are locked or not
-                    foreach (var folder in currentFolder.Children)
+                    foreach (var folderEntry in currentFolder.Children)
                     {
-                        // Check if the folder is locked
-                        string folderStatus = folder.Value.IsLocked ? "<LockedFolder>" : "<Folder>";
-                        response.Add($"{folder.Key} {folderStatus}"); // Adjusted to include folder status
+                        ConsoleFolder folder = folderEntry.Value;
+                        string status = folder.IsLocked ? "<LockedFolder>" : "<Folder>";
+                        response.Add($"{folder.Name} {status}"); // Use folder.Name instead of folderEntry.Key
                     }
-                    // Then, list all files in the current folder
-                    foreach (var file in currentFolder.Files)
+                    foreach (var fileEntry in currentFolder.Files)
                     {
-                        response.Add($"{file.Key} <File>"); // Assuming file.Key is the file name
+                        response.Add($"{fileEntry.Value.Name} <File>"); // Use file.Name
                     }
                 }
+                callback(response);
                 break;
+
             case "cd":
                 if (args.Length > 1)
                 {
@@ -154,27 +156,22 @@ public class FileManager : MonoBehaviour
             case "open":
                 if (args.Length > 1)
                 {   
-                    string fileNameLower = args[1].ToLower(); // Convert filename to lowercase for comparison
+                    string fileNameLower = args[1].ToLower();
                     if (currentFolder.Files.ContainsKey(fileNameLower))
                     {
-                        var file = currentFolder.Files[fileNameLower]; // Access the file object
+                        var file = currentFolder.Files[fileNameLower];
                         if (fileNameLower.EndsWith(".exe"))
                         {
                             virtualMachineManager.CompleteLevel();
-                        }
-                        else
-                        // Check if the file has direct content specified
-                        if (!string.IsNullOrEmpty(file.Content))
-                        {
-                            // Display file content
-                            OpenAndDisplayFile(args[1]);
-                            response.Add("This information seems random....");
+                            response.Add("Executing program...");
                         }
                         else
                         {
-                            // Display file content
-                            OpenAndDisplayFile(args[1]);
-                            response.Add("This information seems important...");
+                            yield return StartCoroutine(OpenAndDisplayFileAsync(args[1], () => {
+                                response.Add(!string.IsNullOrEmpty(file.Content) 
+                                    ? "This information seems random...." 
+                                    : "This information seems important...");
+                            }));
                         }
                     }
                     else
@@ -186,6 +183,7 @@ public class FileManager : MonoBehaviour
                 {
                     response.Add("No file specified.");
                 }
+                callback(response);
                 break;
             case "connect" :
                 if (args.Length > 2)
@@ -210,14 +208,14 @@ public class FileManager : MonoBehaviour
                 {
                     response.Add("Usage: connect <IP Address> <Password>");
                 }
+                callback(response);
                 break;
             
             default:
                 response.Add("Command not recognized in FileManager.");
+                callback(response);
                 break;
         }
-
-        return response;
     }
 
  
@@ -269,7 +267,7 @@ public class FileManager : MonoBehaviour
         return $"<color={colorCode}>{s}</color>";
     }
 
-    private void OpenAndDisplayFile(string fileName)
+    private IEnumerator OpenAndDisplayFileAsync(string fileName, System.Action callback)
     {
         fileName = fileName.ToLower();
         if (currentFolder.Files.TryGetValue(fileName, out ConsoleFile file))
@@ -281,7 +279,7 @@ public class FileManager : MonoBehaviour
             }
             else
             {
-                StartCoroutine(LoadFile(file.Name, "blue", 1, (formattedLines) => {
+                yield return StartCoroutine(LoadFile(file.Name, "blue", 1, formattedLines => {
                     terminalManager.DisplayText(formattedLines);
                 }));
             }
@@ -290,6 +288,7 @@ public class FileManager : MonoBehaviour
         {
             terminalManager.DisplayText(new List<string> { "File not found." });
         }
+        callback?.Invoke();
     }
 
     public string GetCurrentFolderPath()

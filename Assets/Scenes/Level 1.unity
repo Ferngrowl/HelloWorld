@@ -534,7 +534,6 @@ GameObject:
   - component: {fileID: 741148446}
   - component: {fileID: 741148449}
   - component: {fileID: 741148447}
-  - component: {fileID: 741148448}
   m_Layer: 5
   m_Name: UI
   m_TagString: Untagged
@@ -669,21 +668,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   virtualMachineManager: {fileID: 741148449}
-  consoleFileSystem: {fileID: 0}
   awaitingPasswordInput: 0
   terminalManager: {fileID: 741148445}
---- !u!114 &741148448
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 741148440}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 842811437e55bf5428315b8a0c9737dc, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
 --- !u!114 &741148449
 MonoBehaviour:
   m_ObjectHideFlags: 0
