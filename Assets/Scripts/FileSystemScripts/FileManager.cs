@@ -1,29 +1,29 @@
 using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
 using TMPro;
 using UnityEngine;
 using UnityEngine.Networking;
 
 public class FileManager : MonoBehaviour
 {
-    List<string> response = new List<string>();
+    // Container for building response output.
+    private List<string> response = new List<string>();
 
-    //virtual machine variables
+    // References to the virtual machine and file system.
     public VMManager virtualMachineManager;
-
-    //file system variables
     public ConsoleFileSystem consoleFileSystem;
     private ConsoleFolder root;
     private ConsoleFolder currentFolder;
 
-    // locking unlocking variables
+    // Variables for folder unlocking.
     public bool awaitingPasswordInput = false;
     private ConsoleFolder folderAwaitingUnlock;
 
-    [SerializeField] private TerminalManager terminalManager; // Using SerializeField to keep it private but assignable in the Inspector
+    // Reference to TerminalManager for updating the UI.
+    [SerializeField] private TerminalManager terminalManager;
 
-    Dictionary<string,string> colors = new Dictionary<string,string>()
+    // Dictionary for rich text color codes.
+    private Dictionary<string, string> colors = new Dictionary<string, string>()
     {
         {"black", "#021b21"},
         {"gray", "#555d71"},
@@ -34,104 +34,107 @@ public class FileManager : MonoBehaviour
         {"orange", "#ef5847"}
     };
 
-    // Start is called before the first frame update
+    /// <summary>
+    /// Initializes the file system at startup.
+    /// </summary>
     void Start()
     {
-        // Assuming virtualMachineManager.currentVM.FileSystem is already assigned.
+        // Assumes that virtualMachineManager.currentVM.FileSystem is valid.
         consoleFileSystem = virtualMachineManager.currentVM.FileSystem;
-
-        // Set the root and current folder.
         root = consoleFileSystem.GetRootFolder();
-        currentFolder = consoleFileSystem.GetRootFolder();
+        currentFolder = root;
     }
 
+    /// <summary>
+    /// Processes a command asynchronously and returns a list of formatted strings via callback.
+    /// </summary>
     public IEnumerator ProcessCommandAsync(string command, string[] args, System.Action<List<string>> callback)
     {
+        // Clear the response list for the new command.
         List<string> response = new List<string>();
 
-        switch (command.ToLower()) // Ensure command processing is case-insensitive
+        switch (command.ToLower())
         {
             case "help":
-                yield return StartCoroutine(LoadFile("help.txt", "red", 1, helpText => {
-                terminalManager.DisplayText(helpText);
-                callback(helpText);
+                // Load help text from file, display it, then return via callback.
+                yield return StartCoroutine(LoadFile("help.txt", "red", 1, helpText =>
+                {
+                    terminalManager.DisplayText(helpText);
+                    callback(helpText);
                 }));
                 break;
 
             case "dir":
+                Debug.Log("Executing DIR command. Current Folder: " + currentFolder.Name);
                 response.Clear();
-                Debug.Log($"Current Folder: {currentFolder.Name}");
-                Debug.Log($"Children: {currentFolder.Children.Count}, Files: {currentFolder.Files.Count}");
-                if (currentFolder.Children.Count + currentFolder.Files.Count == 0)
+
+                // If there are no child folders or files, add a formatted <empty> message.
+                if (currentFolder.Children.Count == 0 && currentFolder.Files.Count == 0)
                 {
-                    response.Add("<empty>");
+                    response.Add(ColorString("<empty>", colors["gray"]));
                 }
                 else
                 {
+                    // Process and format each child folder.
                     foreach (var folderEntry in currentFolder.Children)
                     {
                         ConsoleFolder folder = folderEntry.Value;
-                        string status = folder.IsLocked ? "<LockedFolder>" : "<Folder>";
-                        response.Add($"{folder.Name} {status}"); // Use folder.Name instead of folderEntry.Key
+                        string status = folder.IsLocked 
+                            ? ColorString("<LockedFolder>", colors["red"]) 
+                            : ColorString("<Folder>", colors["yellow"]);
+                        string line = ColorString(folder.Name, colors["purple"]) + " " + status;
+                        response.Add(line);
                     }
+                    // Process and format each file.
                     foreach (var fileEntry in currentFolder.Files)
                     {
-                        response.Add($"{fileEntry.Value.Name} <File>"); // Use file.Name
+                        ConsoleFile file = fileEntry.Value;
+                        string line = ColorString(file.Name, colors["blue"]) + " " + ColorString("<File>", colors["orange"]);
+                        response.Add(line);
                     }
                 }
+                // Display the constructed response using TerminalManager's response line prefabs.
+                terminalManager.DisplayText(response);
                 callback(response);
                 break;
 
             case "cd":
                 if (args.Length > 1)
                 {
-                    string folderName = args[1]; // Keep the input as is for potential display
-                    string folderNameLower = folderName.ToLower(); // Use a lowercase version for comparison
+                    string folderName = args[1];
+                    string folderNameLower = folderName.ToLower();
 
                     switch (folderNameLower)
                     {
                         case "root":
-                            // Navigate directly to the root folder
                             currentFolder = root;
                             terminalManager.directoryLineMain.text = "G:/" + GetCurrentFolderPath() + ">";
                             break;
-
                         case "..":
                             if (currentFolder.Parent != null)
                             {
-                                // Go up to the parent folder, if not root
                                 currentFolder = currentFolder.Parent;
                                 terminalManager.directoryLineMain.text = "G:/" + GetCurrentFolderPath() + ">";
                             }
                             break;
-
                         default:
-                            // Handle navigation to a specific folder
                             bool folderFound = false;
                             foreach (var child in currentFolder.Children)
                             {
-                                if (child.Key.ToLower() == folderNameLower) // Case-insensitive comparison
+                                if (child.Key.ToLower() == folderNameLower)
                                 {
                                     if (child.Value.IsLocked)
                                     {
-                                        if (child.Value.IsLocked)
-                                        {
-                                            awaitingPasswordInput = true;
-                                            folderAwaitingUnlock = child.Value;
-                                            response.Add("hmm, this folder seems to be corrupted.");
-                                            response.Add("I can fix it but I need to know:");
-                                            
-                                            // Use the security question from the folder
-                                            string question = child.Value.SecurityQuestion; // Access the question from the folder
-                                            response.Add(question); // Display the question
-
-                                            folderFound = true; // Mark as found to prevent "Folder not found" message
-                                            break; // Exit the loop once the locked folder is found
-                                        }
+                                        // Locked folder: prompt for security question.
+                                        awaitingPasswordInput = true;
+                                        folderAwaitingUnlock = child.Value;
+                                        response.Add("Folder is locked. Please answer the security question:");
+                                        response.Add(child.Value.SecurityQuestion);
+                                        folderFound = true;
                                     }
                                     else
                                     {
-                                        // The folder is not locked, navigate into it
+                                        // Navigate into the folder.
                                         currentFolder = child.Value;
                                         terminalManager.directoryLineMain.text = "G:/" + GetCurrentFolderPath() + ">";
                                         folderFound = true;
@@ -144,34 +147,34 @@ public class FileManager : MonoBehaviour
                                 response.Add("Folder not found.");
                             }
                             break;
-                            
                     }
                 }
                 else
                 {
                     response.Add("No directory specified.");
                 }
+                // Display cd command output.
+                terminalManager.DisplayText(response);
+                callback(response);
                 break;
 
             case "open":
                 if (args.Length > 1)
-                {   
+                {
                     string fileNameLower = args[1].ToLower();
                     if (currentFolder.Files.ContainsKey(fileNameLower))
                     {
                         var file = currentFolder.Files[fileNameLower];
                         if (fileNameLower.EndsWith(".exe"))
                         {
+                            // Execute the file (e.g., complete level).
                             virtualMachineManager.CompleteLevel();
                             response.Add("Executing program...");
                         }
                         else
                         {
-                            yield return StartCoroutine(OpenAndDisplayFileAsync(args[1], () => {
-                                response.Add(!string.IsNullOrEmpty(file.Content) 
-                                    ? "This information seems random...." 
-                                    : "This information seems important...");
-                            }));
+                            // Open file and display its content without adding extra messages.
+                            yield return StartCoroutine(OpenAndDisplayFileAsync(args[1], () => { }));
                         }
                     }
                     else
@@ -183,66 +186,70 @@ public class FileManager : MonoBehaviour
                 {
                     response.Add("No file specified.");
                 }
+                terminalManager.DisplayText(response);
                 callback(response);
                 break;
-            case "connect" :
-                if (args.Length > 2)
-                {   
-                    string ipAddress = args[1];
-                    string password = args[2]; // Assuming a password is required
-                    if(virtualMachineManager.ConnectToVM(ipAddress, password))
-                    {
-                        // Connection successful, update consoleFileSystem
-                        consoleFileSystem = virtualMachineManager.currentVM.FileSystem;
-                        root = consoleFileSystem.GetRootFolder(); // Update root
-                        currentFolder = root; // Reset currentFolder to the new root
-                        response.Add("Successfully connected to " + ipAddress + ".");
 
+            case "connect":
+                if (args.Length > 2)
+                {
+                    string ipAddress = args[1];
+                    string password = args[2];
+                    if (virtualMachineManager.ConnectToVM(ipAddress, password))
+                    {
+                        consoleFileSystem = virtualMachineManager.currentVM.FileSystem;
+                        root = consoleFileSystem.GetRootFolder();
+                        currentFolder = root;
+                        response.Add("Successfully connected to " + ipAddress + ".");
                     }
                     else
                     {
-                        response.Add("Failed to connect: Invalid IP address or incorrect password.");      
-                    } 
+                        response.Add("Failed to connect: Invalid IP address or incorrect password.");
+                    }
                 }
                 else
                 {
                     response.Add("Usage: connect <IP Address> <Password>");
                 }
+                terminalManager.DisplayText(response);
                 callback(response);
                 break;
-            
+
             default:
-                response.Add("Command not recognized in FileManager.");
+                response.Add("Command not recognized.");
+                terminalManager.DisplayText(response);
                 callback(response);
                 break;
         }
     }
 
- 
-    // LoadFile method to return a list of colored and formatted strings
+    /// <summary>
+    /// Loads a file from StreamingAssets, applies color formatting, and returns the content as a list of strings.
+    /// </summary>
     public IEnumerator LoadFile(string fileName, string color, int spacing, System.Action<List<string>> callback)
     {
         List<string> formattedLines = new List<string>();
-        
-        // Modified path handling with proper conditional compilation
+
+        // Determine the full file path based on the platform.
         string fullPath;
-        #if UNITY_WEBGL && !UNITY_EDITOR
+#if UNITY_WEBGL && !UNITY_EDITOR
         fullPath = $"{Application.streamingAssetsPath}/{fileName}";
-        #else
+#else
         fullPath = System.IO.Path.Combine(Application.streamingAssetsPath, fileName);
-        #endif
+#endif
 
-        Debug.Log($"Attempting to load file from: {fullPath}");
+        Debug.Log("Loading file from: " + fullPath);
 
-        // Add initial spacing
-        for (int i = 0; i < spacing; i++) formattedLines.Add("");
+        // Add leading blank lines for spacing.
+        for (int i = 0; i < spacing; i++)
+            formattedLines.Add("");
 
         using (UnityWebRequest request = UnityWebRequest.Get(fullPath))
         {
             yield return request.SendWebRequest();
-
             if (request.result == UnityWebRequest.Result.Success)
             {
+                // Split file content into lines, trim, and format with color.
                 string[] lines = request.downloadHandler.text.Split('\n');
                 foreach (string line in lines)
                 {
@@ -251,22 +258,29 @@ public class FileManager : MonoBehaviour
             }
             else
             {
-                Debug.LogError($"Error loading {fileName}: {request.error}");
+                Debug.LogError("Error loading file: " + request.error);
                 formattedLines.Add(ColorString("Error loading file.", colors["red"]));
             }
         }
 
-        // Add trailing spacing
-        for (int i = 0; i < spacing; i++) formattedLines.Add("");
+        // Add trailing blank lines.
+        for (int i = 0; i < spacing; i++)
+            formattedLines.Add("");
 
-        callback?.Invoke(formattedLines);
+        callback(formattedLines);
     }
- 
+
+    /// <summary>
+    /// Wraps a string with Unity rich text color tags.
+    /// </summary>
     public string ColorString(string s, string colorCode)
     {
         return $"<color={colorCode}>{s}</color>";
     }
 
+    /// <summary>
+    /// Opens a file and displays its content using TerminalManager.
+    /// </summary>
     private IEnumerator OpenAndDisplayFileAsync(string fileName, System.Action callback)
     {
         fileName = fileName.ToLower();
@@ -274,13 +288,14 @@ public class FileManager : MonoBehaviour
         {
             if (!string.IsNullOrEmpty(file.Content))
             {
-                var content = new List<string> { ColorString(file.Content, colors["blue"]) };
+                List<string> content = new List<string> { ColorString(file.Content, colors["blue"]) };
                 terminalManager.DisplayText(content);
             }
             else
             {
-                yield return StartCoroutine(LoadFile(file.Name, "blue", 1, formattedLines => {
-                    terminalManager.DisplayText(formattedLines);
+                yield return StartCoroutine(LoadFile(file.Name, "blue", 1, lines =>
+                {
+                    terminalManager.DisplayText(lines);
                 }));
             }
         }
@@ -291,52 +306,43 @@ public class FileManager : MonoBehaviour
         callback?.Invoke();
     }
 
+    /// <summary>
+    /// Constructs the full folder path by traversing up the folder hierarchy.
+    /// </summary>
     public string GetCurrentFolderPath()
     {
         string path = "";
         ConsoleFolder folder = currentFolder;
-
-        // Build the path by prepending each folder's name as we move up the hierarchy
         while (folder != null)
         {
-            path = folder.Name + (path == "" ? "" : "/" + path);
+            path = folder.Name + (string.IsNullOrEmpty(path) ? "" : "/" + path);
             folder = folder.Parent;
         }
-
         return path;
     }
 
+    /// <summary>
+    /// Processes a password attempt for unlocking a locked folder.
+    /// </summary>
     public List<string> ProcessPasswordAttempt(string userInput)
     {
-        response.Clear(); // Clear any existing messages
-        
+        response.Clear();
         if (folderAwaitingUnlock.Unlock(userInput))
         {
-                response.Add("Folder unlocked successfully.");
-                // Navigate into the folder or perform desired action after unlocking
-                currentFolder = folderAwaitingUnlock;
-                terminalManager.directoryLineMain.text = "G:/" + GetCurrentFolderPath() + ">";
-
-                // Reset flags
-                awaitingPasswordInput = false;
-                folderAwaitingUnlock = null;
-
-                response.Add("You did it!");
-                response.Add("That sorted out the corrupted folder nicely,");
-                response.Add("you should be able to access it now ");
+            response.Add("Folder unlocked successfully.");
+            currentFolder = folderAwaitingUnlock;
+            terminalManager.directoryLineMain.text = "G:/" + GetCurrentFolderPath() + ">";
+            awaitingPasswordInput = false;
+            folderAwaitingUnlock = null;
+            response.Add("You did it!");
+            response.Add("Folder is now accessible.");
         }
         else
         {
-            response.Add("Incorrect password.");
-            response.Add("That didn't work,");
-            response.Add("there must be a file somewhere");
-            response.Add("that could give us a hint");
-
-            // Reset flags
+            response.Add("Incorrect password. Please try again.");
             awaitingPasswordInput = false;
             folderAwaitingUnlock = null;
         }
         return response;
     }
-
 }

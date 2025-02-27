@@ -636,12 +636,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: be2fd697da018da4b891bd7fbc85375f, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  directoryLine: {fileID: 2270682673786209215, guid: 5e710f008c1ab454f8cd7ce040044d79, type: 3}
-  responseLine: {fileID: 735084634954650163, guid: bed033cdf3887ed4a92e05c3f707d2dd, type: 3}
+  directoryLinePrefab: {fileID: 2270682673786209215, guid: 5e710f008c1ab454f8cd7ce040044d79, type: 3}
+  responseLinePrefab: {fileID: 735084634954650163, guid: bed033cdf3887ed4a92e05c3f707d2dd, type: 3}
   terminalInput: {fileID: 1474864869}
   directoryLineMain: {fileID: 1943043772}
   userInputLine: {fileID: 1689286785}
-  sr: {fileID: 2066347311}
+  scrollRect: {fileID: 2066347311}
   msgList: {fileID: 314663630}
 --- !u!114 &741148446
 MonoBehaviour:
