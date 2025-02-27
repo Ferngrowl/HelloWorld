@@ -63,11 +63,7 @@ public class VMManager : MonoBehaviour
             new VirtualMachine("192.168.1.2", "0101")
             // Add more VMs as needed
         };
-
         
-        
-        
-
         int currentSceneIndex = SceneManager.GetActiveScene().buildIndex;
         Debug.Log(SceneManager.GetActiveScene().buildIndex);
 
@@ -76,7 +72,7 @@ public class VMManager : MonoBehaviour
             var availablePairs = lockedFolderPairsData.Where(p => !usedPairs.Contains(p)).ToList();
             if (availablePairs.Count == 0) return;
 
-            // start on the first VM
+            // Start on the first VM
             currentVM = virtualMachines[0];
             currentVM.FileSystem.GenerateFileSystem(currentDifficulty);
 

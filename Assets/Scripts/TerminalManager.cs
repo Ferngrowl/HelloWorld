@@ -4,292 +4,353 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
-using System.Linq; 
 
 public class TerminalManager : MonoBehaviour
 {
-     public GameObject directoryLine;
-     public GameObject responseLine;
+    // Public UI references assigned via the Inspector
+    public GameObject directoryLinePrefab;    // Prefab for displaying the user’s command with the directory path
+    public GameObject responseLinePrefab;       // Prefab for displaying system responses
+    public TMP_InputField terminalInput;        // Input field for user commands
+    public TMP_Text directoryLineMain;          // (Optional) Main directory display text if used elsewhere
+    public GameObject userInputLine;            // Container for the input field to ensure it’s always at the bottom
+    public ScrollRect scrollRect;               // Scroll container for the terminal messages
+    public GameObject msgList;                  // Parent container for all terminal messages
 
-     public TMP_InputField terminalInput;
-     public TMP_Text directoryLineMain;
-     public GameObject userInputLine;
-     public ScrollRect sr;
-     private List<string> commandHistory = new List<string>();
-     private int currentHistoryIndex = -1;
-     private bool isNavigatingHistory = false;
+    // Private variables for command history and navigation
+    private List<string> commandHistory = new List<string>();
+    private int currentHistoryIndex = -1;
+    private bool isNavigatingHistory = false;
 
-     public GameObject msgList;
+    // Component references to interpreter and file management systems
+    private Interpreter interpreter;
+    private FileManager fileManager;
 
-     
+    private void Start()
+    {
+        // Get component references
+        interpreter = GetComponent<Interpreter>();
+        fileManager = GetComponent<FileManager>();
 
-     Interpreter interpreter;
-     private FileManager fileManager;
+        if (interpreter == null || fileManager == null)
+        {
+            Debug.LogError("Missing Interpreter or FileManager component in TerminalManager!");
+            enabled = false;
+            return;
+        }
 
-     private void Start()
-     {
-          // WebGL input capture
-          #if UNITY_WEBGL && !UNITY_EDITOR
-          WebGLInput.captureAllKeyboardInput = true;
-          #endif
+        // Subscribe to input field events
+        terminalInput.onValueChanged.AddListener(HandleInputChange);
+        terminalInput.onEndEdit.AddListener(SubmitCommand);
+        terminalInput.lineType = TMP_InputField.LineType.SingleLine; // Ensure single-line input
 
-          interpreter = GetComponent<Interpreter>();
-          fileManager = GetComponent<FileManager>();
+        // Focus the input field on startup
+        terminalInput.ActivateInputField();
+        terminalInput.Select();
 
-          //focus input line
-          terminalInput.onValueChanged.AddListener(HandleInputChange);
-          terminalInput.ActivateInputField();
-          terminalInput.Select();
-          DisplayStartupMessage(); // Display title or welcome message at startup
-     }
-     
-     private void Update()
-     {
-          HandleEnterKey();
-          HandleArrowKeys();
-     }
+        // Begin startup sequence (e.g., ASCII art, connection notification, helper messages)
+        StartCoroutine(DisplayStartupCoroutine());
+    }
 
-     private void HandleEnterKey()
-     {
-          if (terminalInput.isFocused && Input.GetKeyDown(KeyCode.Return) && !string.IsNullOrWhiteSpace(terminalInput.text))
-          {
-               string userInput = terminalInput.text;
-               ClearInputField();
-               
-               // Add to history before processing
-               commandHistory.Add(userInput);
-               while (commandHistory.Count > 10) commandHistory.RemoveAt(0);
-               currentHistoryIndex = -1;
+    private void Update()
+    {
+        // Process arrow keys for command history navigation
+        HandleArrowKeys();
 
-               ProcessCommand(userInput);
-               terminalInput.ActivateInputField();
-          }
-     }
+        // Keep the input field in focus
+        if (!terminalInput.isFocused)
+        {
+            terminalInput.ActivateInputField();
+            terminalInput.Select();
+        }
+    }
 
-     private void HandleArrowKeys()
-     {
-          if (!terminalInput.isFocused) return;
+    /// <summary>
+    /// Called when the user finishes editing the input field (typically by pressing Enter).
+    /// </summary>
+    private void SubmitCommand(string userInput)
+    {
+        // Avoid processing empty commands (can occur on field de-focus)
+        if (string.IsNullOrWhiteSpace(userInput))
+            return;
 
-          if (Input.GetKeyDown(KeyCode.UpArrow))
-          {
-               if (commandHistory.Count == 0) return;
-               
-               isNavigatingHistory = true;
-               currentHistoryIndex = currentHistoryIndex == -1 
-                    ? commandHistory.Count - 1
-                    : Mathf.Clamp(currentHistoryIndex - 1, 0, commandHistory.Count - 1);
-               
-               terminalInput.text = commandHistory[currentHistoryIndex];
-               terminalInput.caretPosition = terminalInput.text.Length;
-               isNavigatingHistory = false;
-          }
-          else if (Input.GetKeyDown(KeyCode.DownArrow))
-          {
-               if (currentHistoryIndex == -1) return;
-               
-               isNavigatingHistory = true;
-               currentHistoryIndex++;
+        // Immediately clear the input field
+        terminalInput.text = "";
 
-               // Handle overflow case
-               if (currentHistoryIndex >= commandHistory.Count)
-               {
-                    terminalInput.text = "";
-                    currentHistoryIndex = -1;
-               }
-               else
-               {
-                    terminalInput.text = commandHistory[currentHistoryIndex];
-               }
-               
-               terminalInput.caretPosition = terminalInput.text.Length;
-               isNavigatingHistory = false;
-          }
-     }
+        // Add the user's command to the UI (directory line)
+        AddDirectoryLine(userInput);
 
-     private void ProcessCommand(string userInput)
-     {
-          AddDirectoryLine(userInput);
-          int lines = AddInterpreterLines(interpreter.Interpret(userInput));
-          ScrollToBottom(lines);
-          userInputLine.transform.SetAsLastSibling();
-          AdjustRectTransform(directoryLineMain);
-          CurateTerminalOutput(200);
-     }
+        // Start asynchronous command processing
+        StartCoroutine(ProcessCommandAsync(userInput));
 
-     private void HandleInputChange(string newValue)
-     {
-          if (!isNavigatingHistory)
-          {
-               // Only reset if not at end of history
-               if (currentHistoryIndex != commandHistory.Count - 1)
-               {
-                    currentHistoryIndex = -1;
-               }
-          }
-     }
+        // Reset command history navigation
+        currentHistoryIndex = -1;
 
-     // use to display a boot up sequence 
-     public void DisplayStartupMessage()
-     {
-          //find out what level we are on
-          int currentSceneIndex = SceneManager.GetActiveScene().buildIndex;
+        // Re-focus the input field after submission
+        terminalInput.ActivateInputField();
+        terminalInput.Select();
+    }
 
-          //display terminal bootup message
-          List<string> startupMessages = interpreter.LoadTitle("ascii.txt", "red", 1);
-          AddInterpreterLines(startupMessages);
+    /// <summary>
+    /// Handles arrow key navigation for browsing previous commands.
+    /// </summary>
+    private void HandleArrowKeys()
+    {
+        if (!terminalInput.isFocused)
+            return;
 
-          List<string> TerminalNotification = new List<string>   {"Connected to 192.168.1.1",
-                                                                 "@?&*!~# Has Connected..."};
+        if (Input.GetKeyDown(KeyCode.UpArrow))
+        {
+            if (commandHistory.Count == 0) return;
 
-          List<string> helper = new List<string>{ "<???>Hello! Sorry for breaking in but I'm here to assist!", 
-                                                  "<???>Try typing 'help' and get a feel for things.", 
-                                                  "<???>Theres a system upgrade for you somewhere on this system.",
-                                                  "<???>You should look for locked folders and some files might",
-                                                  "<???>be able to help crack open folders. Also, dude who owns",
-                                                  "<???>this system was crazy, obsessed with data types of",
-                                                  "<???>all things, keep your eyes peeled, good luck!"};
+            isNavigatingHistory = true;
+            currentHistoryIndex = currentHistoryIndex == -1 
+                ? commandHistory.Count - 1
+                : Mathf.Clamp(currentHistoryIndex - 1, 0, commandHistory.Count - 1);
 
-          // if this is the first level
-          if (currentSceneIndex == 1)
-          {
-               AddInterpreterLines(TerminalNotification);
-               AddHelperLines(helper);
-          }
+            terminalInput.text = commandHistory[currentHistoryIndex];
+            terminalInput.caretPosition = terminalInput.text.Length;
+            isNavigatingHistory = false;
+        }
+        else if (Input.GetKeyDown(KeyCode.DownArrow))
+        {
+            if (currentHistoryIndex == -1)
+                return;
 
-          // if this is the second level
-          if (currentSceneIndex == 2)
-          {
-               List<string> TerminalNotification2 = new List<string>{"Connected to 192.168.1.1"};
-               helper = new List<string>{    "<???>See?!", 
-                                             "<???>Told you I was here to help!", 
-                                             "<Askie>My name is Askie, think of me like your assistant.", 
-                                             "<Askie>Anyway now you can take notes to keep track of stuff!", 
-                                             "<Askie>Just a tip, this system seems to be part of a small",
-                                             "<Askie>network, maybe there's more to find than meets the eye." };
-               AddInterpreterLines(TerminalNotification2);
-               AddHelperLines(helper);
-               
-          }
-          
-          // set user input line to the bottom of the list
-          userInputLine.transform.SetAsLastSibling();
-     }
-   
-     void ClearInputField()
-     {
-          terminalInput.text = "";
-     }
+            isNavigatingHistory = true;
+            currentHistoryIndex++;
 
-     void AddDirectoryLine(string userInput)
-     {    
-          //instantiate directory line
-          GameObject msg = Instantiate(directoryLine, msgList.transform);
+            if (currentHistoryIndex >= commandHistory.Count)
+            {
+                terminalInput.text = "";
+                currentHistoryIndex = -1;
+            }
+            else
+            {
+                terminalInput.text = commandHistory[currentHistoryIndex];
+            }
 
-          //set child index
-          msg.transform.SetSiblingIndex(msgList.transform.childCount - 1);
+            terminalInput.caretPosition = terminalInput.text.Length;
+            isNavigatingHistory = false;
+        }
+    }
 
-          //set text of new game object
-          msg.GetComponentsInChildren<TMP_Text>()[1].text = userInput;
-          msg.GetComponentsInChildren<TMP_Text>()[0].text = "G:/" + fileManager.GetCurrentFolderPath() + ">";
-               
-          // and resize
-          AdjustRectTransform(msg.GetComponentsInChildren<TMP_Text>()[1]);
-          AdjustRectTransform(msg.GetComponentsInChildren<TMP_Text>()[0]);         
-     }  
+    /// <summary>
+    /// Processes the user's command asynchronously.
+    /// </summary>
+    private IEnumerator ProcessCommandAsync(string userInput)
+    {
+        // Add the command to history (limit history to last 10 commands)
+        commandHistory.Add(userInput);
+        while (commandHistory.Count > 10)
+            commandHistory.RemoveAt(0);
+        currentHistoryIndex = -1;
 
-     int AddInterpreterLines(List<string> interpretation)
-     {
-          for(int i = 0; i < interpretation.Count; i++)
-          {
-               //instantiate response line
-               GameObject res = Instantiate(responseLine, msgList.transform);
+        // Call the interpreter to process the command and get a response
+        List<string> response = new List<string>();
+        yield return StartCoroutine(interpreter.InterpretAsync(userInput, result => response = result));
 
-               //set it to the end of all the messages
-               res.transform.SetAsLastSibling();
+        // Display each response line if any were returned
+        if (response.Count > 0)
+        {
+            int lineCount = AddInterpreterLines(response);
+            ScrollToBottom(lineCount);
+        }
 
-               //set the text of the response line to the text in the interpreter
-               res.GetComponentInChildren<TMP_Text>().text = interpretation[i];
+        // Ensure the user input line stays at the bottom and trim excess output
+        userInputLine.transform.SetAsLastSibling();
+        AdjustRectTransform(directoryLineMain);
+        CurateTerminalOutput(200);
 
-          }
+        // Re-focus the input field after processing
+        terminalInput.ActivateInputField();
+        terminalInput.Select();
+    }
 
-          return interpretation.Count;
-     }
+    /// <summary>
+    /// Resets history navigation if the user manually changes the input.
+    /// </summary>
+    private void HandleInputChange(string newValue)
+    {
+        if (!isNavigatingHistory && currentHistoryIndex != commandHistory.Count - 1)
+        {
+            currentHistoryIndex = -1;
+        }
+    }
 
-     int AddHelperLines(List<string> interpretation)
-     {
-          for(int i = 0; i < interpretation.Count; i++)
-          {
-               //instantiate response line
-               GameObject res = Instantiate(responseLine, msgList.transform);
+    /// <summary>
+    /// Displays the startup sequence including ASCII art and helper messages.
+    /// </summary>
+    private IEnumerator DisplayStartupCoroutine()
+    {
+        // Load and display ASCII title art
+        List<string> startupMessages = new List<string>();
+        yield return StartCoroutine(interpreter.LoadTitle("ascii.txt", "red", 1, result => startupMessages = result));
+        AddInterpreterLines(startupMessages);
 
-               //set it to the end of all the messages
-               res.transform.SetAsLastSibling();
+        // Display static connection notifications
+        List<string> terminalNotification = new List<string>
+        {
+            "Connected to 192.168.1.1",
+            "@?&*!~# Has Connected..."
+        };
+        AddInterpreterLines(terminalNotification);
 
-               //set the text of the response line to the text in the interpreter
-               res.GetComponentInChildren<TMP_Text>().text = fileManager.ColorString(interpretation[i], "purple");
+        // Display scene-specific helper messages
+        int currentSceneIndex = SceneManager.GetActiveScene().buildIndex;
+        List<string> helperMessages = GetHelperMessages(currentSceneIndex);
+        AddHelperLines(helperMessages);
 
-          }
+        // Ensure the user input line remains at the bottom of the message list
+        userInputLine.transform.SetAsLastSibling();
+    }
 
-          return interpretation.Count;
-     }
+    /// <summary>
+    /// Returns helper messages based on the current scene index.
+    /// </summary>
+    private List<string> GetHelperMessages(int sceneIndex)
+    {
+        if (sceneIndex == 1)
+        {
+            return new List<string>
+            {
+                "<???>Hello! Sorry for breaking in but I'm here to assist!",
+                "<???>Try typing 'help' and get a feel for things.",
+                "<???>There's a system upgrade for you somewhere on this system.",
+                "<???>You should look for locked folders and some files might",
+                "<???>be able to help crack open folders. Also, the owner",
+                "<???>was crazy—obsessed with data types of all things. Keep your eyes peeled!",
+                "<???>Good luck!"
+            };
+        }
+        else if (sceneIndex == 2)
+        {
+            return new List<string>
+            {
+                "<???>See?!",
+                "<???>Told you I was here to help!",
+                "<Askie>My name is Askie, think of me like your assistant.",
+                "<Askie>Now you can take notes to keep track of stuff!",
+                "<Askie>Tip: This system is part of a small network—there’s more than meets the eye."
+            };
+        }
+        return new List<string>();
+    }
 
-     //scroll to bottom of the screen based on lines being displayed
-     void ScrollToBottom(int lines)
-     {
-          Canvas.ForceUpdateCanvases(); // Force the Canvas to update
+    /// <summary>
+    /// Adjusts the size of a TMP_Text component based on screen width.
+    /// </summary>
+    private void AdjustRectTransform(TMP_Text textComponent)
+    {
+        if (textComponent == null)
+            return;
 
-          sr.verticalNormalizedPosition = 0; // Scroll immediately to the bottom
-     }
+        textComponent.ForceMeshUpdate();
+        float maxWidth = Screen.width * 0.8f;
+        Vector2 preferredValues = textComponent.GetPreferredValues(float.PositiveInfinity, float.PositiveInfinity);
+        float adjustedWidth = Mathf.Min(preferredValues.x, maxWidth);
+        textComponent.rectTransform.sizeDelta = new Vector2(adjustedWidth, textComponent.rectTransform.sizeDelta.y);
+        LayoutRebuilder.ForceRebuildLayoutImmediate(textComponent.rectTransform);
+    }
 
-     //trims overflow when there are too many lines that cant be seen
-     void CurateTerminalOutput(int lines)
-          { 
-               if(msgList.transform.childCount > lines)
-               {
-                    int overflow = msgList.transform.childCount - lines;
-                    
-                    for(int i = 0; i < overflow; i++)
-                    {
-                         //Decrease the size of the list by one message height (currently 35 units)
-                         msgList.GetComponent<RectTransform>().sizeDelta = msgList.GetComponent<RectTransform>().sizeDelta - new Vector2(0, 35.0f);
-                         Destroy(msgList.transform.GetChild(i).gameObject);
+    /// <summary>
+    /// Instantiates response prefabs for each line from the interpreter.
+    /// </summary>
+    private int AddInterpreterLines(List<string> lines)
+    {
+        if (lines == null || lines.Count == 0)
+        {
+            Debug.LogWarning("No interpreter lines to add!");
+            return 0;
+        }
 
-                    }
+        foreach (string line in lines)
+        {
+            if (responseLinePrefab == null)
+            {
+                Debug.LogError("ResponseLine prefab is not assigned!");
+                continue;
+            }
+            GameObject responseObj = Instantiate(responseLinePrefab, msgList.transform);
+            responseObj.transform.SetAsLastSibling();
+            TMP_Text textComponent = responseObj.GetComponentInChildren<TMP_Text>();
+            textComponent.text = line;
+        }
+        return lines.Count;
+    }
 
-               }
+    /// <summary>
+    /// Instantiates helper message lines using a specific color.
+    /// </summary>
+    private int AddHelperLines(List<string> lines)
+    {
+        foreach (string line in lines)
+        {
+            GameObject responseObj = Instantiate(responseLinePrefab, msgList.transform);
+            responseObj.transform.SetAsLastSibling();
+            TMP_Text textComponent = responseObj.GetComponentInChildren<TMP_Text>();
+            // Use FileManager's color formatting utility
+            textComponent.text = fileManager.ColorString(line, "purple");
+        }
+        return lines.Count;
+    }
 
-          }
+    /// <summary>
+    /// Scrolls the message list to the bottom.
+    /// </summary>
+    private void ScrollToBottom(int lineCount)
+    {
+        Canvas.ForceUpdateCanvases();
+        LayoutRebuilder.ForceRebuildLayoutImmediate(msgList.GetComponent<RectTransform>());
+        scrollRect.verticalNormalizedPosition = 0;
+    }
 
-     // This method allows external components to display text in the terminal
-     public void DisplayText(List<string> lines)
-     {
-          // Add the lines to the terminal
-          AddInterpreterLines(lines);
-          
-          // Move input line to bottom
-          userInputLine.transform.SetAsLastSibling();
-          
-          // Optionally scroll to the bottom
-          ScrollToBottom(lines.Count);
-     }
+    /// <summary>
+    /// Trims excess messages if the count exceeds the specified limit.
+    /// </summary>
+    private void CurateTerminalOutput(int maxLines)
+    {
+        int childCount = msgList.transform.childCount;
+        if (childCount > maxLines)
+        {
+            int overflow = childCount - maxLines;
+            RectTransform msgListRect = msgList.GetComponent<RectTransform>();
+            for (int i = 0; i < overflow; i++)
+            {
+                // Adjust the container size assuming each message has a fixed height (e.g., 35 units)
+                msgListRect.sizeDelta -= new Vector2(0, 35.0f);
+                Destroy(msgList.transform.GetChild(i).gameObject);
+            }
+        }
+    }
 
-     void AdjustRectTransform(TMP_Text textComponent)
-     {    
-          // Force the text component to update
-          textComponent.ForceMeshUpdate();
+    /// <summary>
+    /// Adds a directory line displaying the current path and the user's input command.
+    /// </summary>
+    private void AddDirectoryLine(string userInput)
+    {
+        GameObject directoryObj = Instantiate(directoryLinePrefab, msgList.transform);
+        directoryObj.transform.SetSiblingIndex(msgList.transform.childCount - 1);
+        TMP_Text[] texts = directoryObj.GetComponentsInChildren<TMP_Text>();
+        if (texts.Length >= 2)
+        {
+            texts[0].text = "G:/" + fileManager.GetCurrentFolderPath() + ">";
+            texts[1].text = userInput;
+            AdjustRectTransform(texts[0]);
+            AdjustRectTransform(texts[1]);
+        }
+        else
+        {
+            Debug.LogWarning("Directory line prefab is missing required TMP_Text components.");
+        }
+    }
 
-          float maxWidth = Screen.width * 0.8f; // Maximum width 80% of the screen width
-
-          // Get the preferred values for the current text content
-          Vector2 preferredValues = textComponent.GetPreferredValues(float.PositiveInfinity, float.PositiveInfinity);
-
-          // Calculate the new width, ensuring it doesn't exceed maxWidth
-          float adjustedWidth = Mathf.Min(preferredValues.x, maxWidth);
-
-          // Adjust width of the RectTransform
-          textComponent.rectTransform.sizeDelta = new Vector2(adjustedWidth, textComponent.rectTransform.sizeDelta.y);
-
-          LayoutRebuilder.ForceRebuildLayoutImmediate(textComponent.rectTransform);
-     }
-
+    /// <summary>
+    /// External method to display text in the terminal.
+    /// </summary>
+    public void DisplayText(List<string> lines)
+    {
+        AddInterpreterLines(lines);
+        userInputLine.transform.SetAsLastSibling();
+        ScrollToBottom(lines.Count);
+    }
 }

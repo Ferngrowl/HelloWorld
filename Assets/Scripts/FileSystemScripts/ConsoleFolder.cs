@@ -28,9 +28,10 @@ public class ConsoleFolder
 
     public void AddChild(ConsoleFolder child)
     {
-        if (!Children.ContainsKey(child.Name))
+        string key = child.Name; // Use original case
+        if (!Children.ContainsKey(key))
         {
-            Children.Add(child.Name, child);
+            Children.Add(key, child);
             child.Parent = this;
         }
     }

@@ -4,7 +4,7 @@ using System.Linq;
 using UnityEngine.SceneManagement;
 using System.Text;
 
-public class ConsoleFileSystem : MonoBehaviour
+public class ConsoleFileSystem
 {
     
     public ConsoleFolder rootFolder;
@@ -41,19 +41,19 @@ public class ConsoleFileSystem : MonoBehaviour
 
     //list of used pairs in the current system
     private HashSet<LockedFolderPair> usedPairs = new HashSet<LockedFolderPair>();
-
-    void Awake()
+    public ConsoleFileSystem()
     {
-          
+        rootFolder = new ConsoleFolder("root"); // Initialize root
     }
 
     public void GenerateFileSystem(int difficulty)
     {
-        rootFolder = new ConsoleFolder("root");
-
+        
         foreach (var baseFolder in baseFolders)
         {
             ConsoleFolder folder = new ConsoleFolder(baseFolder);
+            Debug.Log(baseFolder + " generated");
+
             PopulateFolder(folder, difficulty);
             rootFolder.AddChild(folder);
         }

@@ -1,14 +1,12 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.IO;
-using Unity.VisualScripting.FullSerializer;
 using UnityEngine;
 
 public class Interpreter : MonoBehaviour
 {
-
-    Dictionary<string,string> colors = new Dictionary<string,string>()
+    // Dictionary for rich text colors (used for formatting if needed).
+    private Dictionary<string, string> colors = new Dictionary<string, string>()
     {
         {"black", "#021b21"},
         {"gray", "#555d71"},
@@ -19,114 +17,126 @@ public class Interpreter : MonoBehaviour
         {"orange", "#ef5847"}
     };
 
-    List<string> response = new List<string>();
+    // Reference to the FileManager component for command dispatch.
+    private FileManager fileManager;
 
-     private FileManager fileManager;
-
-     void Start()
+    /// <summary>
+    /// Initializes the Interpreter by retrieving the FileManager component.
+    /// </summary>
+    void Start()
     {
         fileManager = GetComponent<FileManager>();
         if (fileManager == null)
         {
             Debug.LogError("FileManager component not found on " + gameObject.name);
         }
-
     }
 
-    public List<string> Interpret(string userInput)
+    /// <summary>
+    /// Interprets the user's input command asynchronously and returns a list of response strings.
+    /// </summary>
+    /// <param name="userInput">The full command entered by the user.</param>
+    /// <param name="callback">Callback to deliver the response lines.</param>
+    public IEnumerator InterpretAsync(string userInput, Action<List<string>> callback)
     {
-        response.Clear();
+        List<string> response = new List<string>();
+        bool errorOccurred = false;
+        Exception caughtException = null;
 
-         // Check if awaiting password input before splitting the command
-        if (fileManager.awaitingPasswordInput == true) 
+        // Execute the main interpretation coroutine with error handling.
+        yield return StartCoroutine(InterpretCoroutine(userInput, response, ex =>
         {
-            // Directly forward the userInput as a password attempt
-            response.AddRange(fileManager.ProcessPasswordAttempt(userInput));
-        }
-        else
+            errorOccurred = true;
+            caughtException = ex;
+        }));
+
+        if (errorOccurred)
         {
-            string[] args = userInput.Split();
-
-            switch (args[0])
-            {
-                case "help":
-                    if (fileManager != null)
-                    {
-                        response.AddRange(fileManager.ProcessCommand(args[0], args));
-                    }
-                    break;
-                
-                case "dir":
-                    if (fileManager != null)
-                    {
-                        response.AddRange(fileManager.ProcessCommand(args[0], args));
-                    }
-                    break;
-
-                case "cd":
-                    if (fileManager != null)
-                    {
-                        response.AddRange(fileManager.ProcessCommand(args[0], args));
-                    }
-                    break;
-
-                case "open":
-                    if (fileManager != null)
-                    {
-                        response.AddRange(fileManager.ProcessCommand(args[0], args));
-                    }
-                    break;
-                
-                case "connect":
-                    if (fileManager != null)
-                    {
-                        response.AddRange(fileManager.ProcessCommand(args[0], args));
-                    }
-                    break;
-
-                // Handle other non-file system commands
-                case "displaytitle":
-                    //load title
-                    LoadTitle("ascii.txt", "red", 2);
-                    break;
-
-                case "exit":
-                    Application.Quit();
-                    break;
-
-                default:
-                    response.Add("Command not recognized.");
-                    response.Add("Type \"help\" for a list of commands.");
-                    break;
-            } 
+            Debug.LogError($"Command error: {caughtException}");
+            response.Add("System error: Command failed to execute");
         }
-        return response;
+
+        callback?.Invoke(response);
     }
 
+    /// <summary>
+    /// Main interpreter coroutine that dispatches commands to the FileManager.
+    /// If awaiting a password, it handles that separately.
+    /// </summary>
+    private IEnumerator InterpretCoroutine(string userInput, List<string> response, Action<Exception> errorHandler)
+    {
+        // If the FileManager is waiting for a password, process it immediately.
+        if (fileManager.awaitingPasswordInput)
+        {
+            try
+            {
+                response = fileManager.ProcessPasswordAttempt(userInput);
+            }
+            catch (Exception ex)
+            {
+                errorHandler?.Invoke(ex);
+            }
+            yield break;
+        }
+
+        // Split the input into command arguments while removing any extra spaces.
+        string[] args = userInput.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        if (args.Length == 0)
+            yield break;
+
+        // Dispatch the command to FileManager and capture the response.
+        IEnumerator commandCoroutine = fileManager.ProcessCommandAsync(
+            args[0],
+            args,
+            commandResponse => { response = commandResponse; }
+        );
+
+        yield return StartCoroutine(RunWithErrorHandling(commandCoroutine, errorHandler));
+    }
+
+    /// <summary>
+    /// Wraps a coroutine execution with error handling.
+    /// </summary>
+    private IEnumerator RunWithErrorHandling(IEnumerator coroutine, Action<Exception> errorHandler)
+    {
+        while (true)
+        {
+            bool moveNext;
+            try
+            {
+                moveNext = coroutine.MoveNext();
+            }
+            catch (Exception ex)
+            {
+                errorHandler?.Invoke(ex);
+                yield break;
+            }
+
+            if (!moveNext)
+                yield break;
+
+            yield return coroutine.Current;
+        }
+    }
+
+    /// <summary>
+    /// Wraps a string with Unity rich text color tags.
+    /// </summary>
     public string ColorString(string s, string color)
     {
-        string leftTag = "<color=" + color + ">";
-        string rightTag = "</color>";
-
-        return leftTag + s + rightTag;
+        return $"<color={color}>{s}</color>";
     }
 
-    public List<string> LoadTitle(string path, string color, int spacing)
+    /// <summary>
+    /// Loads a title file via the FileManager's file-loading method.
+    /// </summary>
+    public IEnumerator LoadTitle(string path, string color, int spacing, Action<List<string>> callback)
     {
-        StreamReader file = new StreamReader(Path.Combine(Application.streamingAssetsPath, path));
-
-        while(!file.EndOfStream)
+        List<string> result = new List<string>();
+        yield return StartCoroutine(fileManager.LoadFile(path, color, spacing, lines =>
         {
-            response.Add(ColorString(file.ReadLine(), colors[color]));
-        }
-
-        for(int i = 0; i < spacing; i++)
-        {
-            response.Add("");
-        }
-        
-        file.Close();
-        return response;
+            result = lines;
+            callback?.Invoke(result);
+        }));
     }
-
 }
